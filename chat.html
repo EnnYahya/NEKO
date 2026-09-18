@@ -54,6 +54,7 @@
 <script src="js/auth.js"></script>
 <script src="js/posts.js"></script>
 <script src="js/chat.js"></script>
+<script src="js/notifications.js"></script>
 <script>
   let currentUser = null;
   let currentProfile = null;
@@ -104,8 +105,10 @@
         ? messages.map(renderMessage).join("")
         : `<div class="thread-empty">No messages yet — say hi!</div>`;
       container.scrollTop = container.scrollHeight;
+      // Keep marking read while this thread stays open, so a message that
+      // arrives while you're actively looking at it doesn't add a badge.
+      markConversationRead(conversationId, currentUser.uid);
     });
-
     renderConvoList();
   };
 
@@ -158,6 +161,7 @@
     const doc = await db.collection("users").doc(user.uid).get();
     currentProfile = doc.data() || { username: "friend" };
     document.getElementById("welcome-text").textContent = "Hey, " + currentProfile.username + "!";
+    attachNavBadges(user.uid);
 
     listenToConversations(user.uid, (convos) => {
       conversationsCache = convos;

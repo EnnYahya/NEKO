@@ -16,7 +16,7 @@
   </div>
   <div class="topbar-user">
     <a class="nav-link" href="dashboard.html">🏠 Home</a>
-    <a class="nav-link" href="chat.html">💬 Chat</a>
+    <a class="nav-link" data-nav="chat" href="chat.html">💬 Chat</a>
     <button id="logout-btn">Log Out</button>
   </div>
 </div>
@@ -42,6 +42,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
 <script src="js/firebase-config.js"></script>
 <script src="js/auth.js"></script>
+<script src="js/notifications.js"></script>
 <script>
   let currentUser = null;
 
@@ -81,6 +82,7 @@
 
   requireLogin((user) => {
     currentUser = user;
+    attachNavBadges(user.uid);
     db.collection("chess_matches")
       .where("players", "array-contains", user.uid)
       .onSnapshot((snapshot) => {

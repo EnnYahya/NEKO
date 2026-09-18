@@ -16,8 +16,8 @@
   </div>
   <div class="topbar-user">
     <a class="nav-link" href="dashboard.html">🏠 Home</a>
-    <a class="nav-link" href="games.html">🎮 Games</a>
-    <a class="nav-link" href="chat.html">💬 Chat</a>
+    <a class="nav-link" data-nav="games" href="games.html">🎮 Games</a>
+    <a class="nav-link" data-nav="chat" href="chat.html">💬 Chat</a>
     <button id="logout-btn">Log Out</button>
   </div>
 </div>
@@ -49,6 +49,7 @@
 <script src="js/auth.js"></script>
 <script src="js/chat.js"></script>
 <script src="js/chess-engine.js"></script>
+<script src="js/notifications.js"></script>
 <script>
   const params = new URLSearchParams(window.location.search);
   const viewedUid = params.get("uid");
@@ -72,6 +73,7 @@
     currentUser = user;
     const myDoc = await db.collection("users").doc(user.uid).get();
     currentProfile = myDoc.data() || { username: "friend" };
+    attachNavBadges(user.uid);
 
     if (!viewedUid) {
       document.getElementById("profile-username").textContent = "No user specified";
