@@ -785,6 +785,7 @@ h1, h2, h3, .display {
 }
 
 .nav-link {
+  position: relative;
   color: #fff;
   text-decoration: none;
   font-weight: 700;
@@ -793,6 +794,23 @@ h1, h2, h3, .display {
 }
 
 .nav-link:hover { opacity: 1; text-decoration: underline; }
+
+.nav-badge {
+  position: absolute;
+  top: -8px;
+  right: -12px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--red, #a63d40);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 16px;
+  text-align: center;
+  box-shadow: 0 0 0 2px var(--teal, #1f6f6b);
+}
 
 /* ---------- Stories ---------- */
 .stories-bar {
@@ -1150,4 +1168,3 @@ canvas#game-canvas {
 .post-username:hover, .comment-username:hover {
   text-decoration: underline;
 }
-
