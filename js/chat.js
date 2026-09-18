@@ -109,7 +109,8 @@ async function sendMessage(conversationId, senderId, text) {
   });
   batch.update(convoRef, {
     lastMessage: cleanText,
-    lastMessageAt: firebase.firestore.FieldValue.serverTimestamp()
+    lastMessageAt: firebase.firestore.FieldValue.serverTimestamp(),
+    lastMessageSenderId: senderId
   });
   await batch.commit();
 }
