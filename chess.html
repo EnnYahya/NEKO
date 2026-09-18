@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nekko — Chess</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="paw-field"></div>
+
+<div class="topbar">
+  <div class="topbar-title">
+    <div class="brand-mark"><img src="images/logo-placeholder.png" alt="Nekko logo" onerror="this.style.display='none'; this.parentElement.textContent='N';"></div>
+    Nekko
+  </div>
+  <div class="topbar-user">
+    <a class="nav-link" href="games.html">← Games</a>
+  </div>
+</div>
+
+<div class="game-screen" style="max-width:520px;">
+  <h1 style="margin-bottom:6px;">♟️ Chess</h1>
+  <p style="font-size:13px; opacity:0.65; margin-bottom:16px;" id="opponent-text">Loading match…</p>
+
+  <div class="chess-status" id="status-text">Loading…</div>
+
+  <div class="chess-board" id="board"></div>
+
+  <div style="margin-top:16px; text-align:center;">
+    <button class="btn" id="play-again-btn" style="display:none; width:auto; padding:8px 20px;">🔁 Play Again</button>
+  </div>
+
+  <div class="game-controls-hint">Tap a piece to see its legal moves, then tap a highlighted square to move.<br>No castling / en passant — pawns promote straight to queen.</div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
+<script src="js/firebase-config.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/chess-engine.js"></script>
+<script>
+  const params = new URLSearchParams(window.location.search);
+  const matchId = params.get("match");
+
+  let currentUser = null;
+  let myColor = null; // "w" or "b"
+  let matchData = null;
+  let board = null;
+  let turn = "w";
+  let selected = null;
+  let legalTargets = [];
+  let gameOver = false;
+  let applyingRemote = false;
+
+  const boardEl = document.getElementById("board");
+  const statusEl = document.getElementById("status-text");
+  const opponentEl = document.getElementById("opponent-text");
+  const toastEl = document.getElementById("toast");
+  const playAgainBtn = document.getElementById("play-again-btn");
+
+  function showToast(msg) {
+    toastEl.textContent = msg;
+    toastEl.className = "toast show";
+    setTimeout(() => toastEl.className = "toast", 2000);
+  }
+
+  function render() {
+    boardEl.innerHTML = "";
+    // Board logic always works in absolute board coordinates (row 0 = black's
+    // back rank). For display only, if I'm playing black, flip both axes so
+    // my own pieces appear at the bottom of MY screen — my opponent (white)
+    // still sees the normal orientation on theirs. onSquareClick always gets
+    // the real board coordinates, so nothing about move logic changes.
+    const flip = myColor === "b";
+    for (let displayR = 0; displayR < 8; displayR++) {
+      for (let displayC = 0; displayC < 8; displayC++) {
+        const r = flip ? 7 - displayR : displayR;
+        const c = flip ? 7 - displayC : displayC;
+
+        const square = document.createElement("div");
+        const isLight = (r + c) % 2 === 0;
+        square.className = `chess-square ${isLight ? "light" : "dark"}`;
+
+        if (selected && selected.r === r && selected.c === c) square.classList.add("selected");
+
+        const target = legalTargets.find(t => t.r === r && t.c === c);
+        if (target) {
+          square.classList.add(board[r][c] ? "legal-capture" : "legal-move");
+        }
+
+        const piece = board[r][c];
+        if (piece) square.textContent = PIECE_SYMBOLS[piece];
+
+        square.addEventListener("click", () => onSquareClick(r, c));
+        boardEl.appendChild(square);
+      }
+    }
+  }
+
+  function onSquareClick(r, c) {
+    if (gameOver) return;
+    if (myColor === null) return; // spectating shouldn't happen, but just in case
+    if (turn !== myColor) { showToast("Wait for your turn!"); return; }
+
+    const piece = board[r][c];
+
+    if (selected) {
+      const isTarget = legalTargets.some(t => t.r === r && t.c === c);
+      if (isTarget) {
+        const newBoard = applyMove(board, selected, { r, c });
+        const newTurn = turn === "w" ? "b" : "w";
+        selected = null;
+        legalTargets = [];
+        commitMove(newBoard, newTurn);
+        return;
+      }
+      if (piece && pieceColor(piece) === turn) {
+        selected = { r, c };
+        legalTargets = legalMoves(board, r, c);
+        render();
+        return;
+      }
+      selected = null;
+      legalTargets = [];
+      render();
+      return;
+    }
+
+    if (piece && pieceColor(piece) === turn) {
+      selected = { r, c };
+      legalTargets = legalMoves(board, r, c);
+      render();
+    }
+  }
+
+  async function commitMove(newBoard, newTurn) {
+    // Optimistically render locally, then write to Firestore — the
+    // opponent's page picks it up through the live listener below.
+    board = newBoard;
+    turn = newTurn;
+    render();
+    updateStatusLocal();
+
+    const status = getGameStatus(board, turn);
+    const update = {
+      board: JSON.stringify(board),
+      turn: turn,
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    };
+    if (status === "checkmate") {
+      const winnerColor = turn === "w" ? "b" : "w";
+      const winnerUid = winnerColor === "w" ? matchData.whiteId : matchData.blackId;
+      update.status = "finished";
+      update.result = "win-" + winnerUid;
+    } else if (status === "stalemate") {
+      update.status = "finished";
+      update.result = "stalemate";
+    }
+
+    applyingRemote = true; // avoid double-rendering when our own write echoes back
+    try {
+      await db.collection("chess_matches").doc(matchId).update(update);
+    } catch (err) {
+      showToast("Move failed to save: " + err.message);
+    }
+  }
+
+  function updateStatusLocal() {
+    const status = getGameStatus(board, turn);
+    const colorName = turn === "w" ? "White" : "Black";
+    const myColorName = myColor === "w" ? "White" : "Black";
+
+    if (status === "checkmate") {
+      const winner = turn === "w" ? "Black" : "White";
+      statusEl.textContent = `Checkmate! ${winner} wins 🎉`;
+      gameOver = true;
+    } else if (status === "stalemate") {
+      statusEl.textContent = "Stalemate — it's a draw";
+      gameOver = true;
+    } else if (status === "check") {
+      statusEl.textContent = `${colorName} is in check! (You're ${myColorName})`;
+    } else if (turn === myColor) {
+      statusEl.textContent = `Your move (${myColorName})`;
+    } else {
+      statusEl.textContent = `Waiting for ${colorName}…`;
+    }
+  }
+
+  requireLogin((user) => {
+    currentUser = user;
+
+    if (!matchId) {
+      statusEl.textContent = "No match selected.";
+      opponentEl.textContent = "Go to a friend's profile and hit \"Play Chess\" to start a game.";
+      return;
+    }
+
+    db.collection("chess_matches").doc(matchId).onSnapshot((doc) => {
+      if (!doc.exists) {
+        statusEl.textContent = "This match doesn't exist.";
+        return;
+      }
+      matchData = doc.data();
+
+      if (!matchData.players.includes(currentUser.uid)) {
+        statusEl.textContent = "You're not part of this match.";
+        opponentEl.textContent = "";
+        return;
+      }
+
+      myColor = matchData.whiteId === currentUser.uid ? "w" : "b";
+      const otherUid = matchData.players.find(uid => uid !== currentUser.uid);
+      const otherName = matchData.usernames[otherUid] || "friend";
+      opponentEl.textContent = `You are ${myColor === "w" ? "White" : "Black"} — playing against ${otherName}`;
+
+      board = JSON.parse(matchData.board);
+      turn = matchData.turn;
+      gameOver = matchData.status === "finished";
+      selected = null;
+      legalTargets = [];
+
+      playAgainBtn.style.display = gameOver ? "inline-block" : "none";
+      if (!gameOver) {
+        playAgainBtn.disabled = false;
+        playAgainBtn.textContent = "🔁 Play Again";
+      }
+
+      render();
+      if (gameOver) {
+        if (matchData.result === "stalemate") {
+          statusEl.textContent = "Stalemate — it's a draw";
+        } else if (matchData.result === "win-" + currentUser.uid) {
+          statusEl.textContent = "Checkmate! You win 🎉";
+        } else {
+          statusEl.textContent = `Checkmate! ${otherName} wins`;
+        }
+      } else {
+        updateStatusLocal();
+      }
+    }, (err) => {
+      console.error("Match listener error:", err);
+      statusEl.textContent = "Couldn't load this match.";
+    });
+  });
+
+  playAgainBtn.addEventListener("click", async () => {
+    if (!matchData) return;
+    playAgainBtn.disabled = true;
+    playAgainBtn.textContent = "Starting…";
+    try {
+      // Swap who plays White so the previous loser gets first move this time.
+      const newWhiteId = matchData.blackId;
+      const newBlackId = matchData.whiteId;
+      await db.collection("chess_matches").doc(matchId).update({
+        board: JSON.stringify(createInitialBoard()),
+        turn: "w",
+        status: "active",
+        result: null,
+        whiteId: newWhiteId,
+        blackId: newBlackId,
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
+    } catch (err) {
+      showToast("Couldn't start a new game: " + err.message);
+      playAgainBtn.disabled = false;
+      playAgainBtn.textContent = "🔁 Play Again";
+    }
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nekko — Home</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="paw-field"></div>
+
+<div class="topbar">
+  <div class="topbar-title">
+    <div class="brand-mark"><img src="images/logo-placeholder.png" alt="Nekko logo" onerror="this.style.display='none'; this.parentElement.textContent='N';"></div>
+    Nekko
+  </div>
+  <div class="topbar-user">
+    <a class="nav-link" href="games.html">🎮 Games</a>
+    <a class="nav-link" href="chat.html">💬 Chat</a>
+    <a class="nav-link" id="my-profile-link" href="#">👤 My Profile</a>
+    <a class="nav-link" id="admin-link" href="admin.html" style="display:none;">🛡️ Admin</a>
+    <span id="welcome-text">Welcome!</span>
+    <button id="logout-btn">Log Out</button>
+  </div>
+</div>
+
+<div class="feed-shell">
+
+  <div class="composer">
+    <textarea id="post-text" placeholder="What's on your mind?" maxlength="2000"></textarea>
+    <div class="composer-footer">
+      <span></span>
+      <button class="btn" id="post-btn">Post</button>
+    </div>
+  </div>
+
+  <div id="feed"></div>
+
+  <div class="empty-state" id="empty-feed" style="display:none;">
+    <div class="paw-big">🐾</div>
+    <h2>No posts yet</h2>
+    <p>Be the first to post something!</p>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
+<script src="js/firebase-config.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/posts.js"></script>
+<script>
+  let currentUser = null;
+  let currentProfile = null;
+  const openComments = new Set();
+  const commentUnsubscribers = {};
+  const commentsCache = {}; // postId -> array of comments, so re-renders don't blank out open threads
+
+  function showToast(msg) {
+    const t = document.getElementById("toast");
+    t.textContent = msg;
+    t.className = "toast show";
+    setTimeout(() => t.className = "toast", 2000);
+  }
+
+  function initials(username) {
+    return (username || "?").charAt(0).toUpperCase();
+  }
+
+  function renderPost(post) {
+    const isOpen = openComments.has(post.id);
+    return `
+      <div class="post-card" data-post-id="${post.id}">
+        <div class="post-header">
+          <a class="post-avatar" href="profile.html?uid=${post.authorId}">${initials(post.authorUsername)}</a>
+          <div class="post-meta">
+            <a class="post-username" href="profile.html?uid=${post.authorId}">${escapeHtml(post.authorUsername)}</a>
+            <div class="post-time">${timeAgo(post.createdAt)}</div>
+          </div>
+        </div>
+        ${post.text ? `<div class="post-text">${escapeHtml(post.text)}</div>` : ""}
+        <div class="post-actions">
+          <button class="post-action-btn" onclick="toggleComments('${post.id}')">💬 ${post.commentCount || 0} Comments</button>
+          <button class="post-action-btn" onclick="shareThisPost('${post.id}')">🔗 Share</button>
+          ${(currentUser && (post.authorId === currentUser.uid || (currentProfile && currentProfile.isAdmin)))
+            ? `<button class="post-action-btn" onclick="deleteThisPost('${post.id}')">🗑️ Delete</button>`
+            : ""}
+        </div>
+        <div class="comments-section ${isOpen ? "show" : ""}" id="comments-${post.id}">
+          <div id="comments-list-${post.id}">${isOpen && commentsCache[post.id] ? commentsCache[post.id].map(renderComment).join("") : ""}</div>
+          <form class="comment-form" onsubmit="submitComment(event, '${post.id}')">
+            <input type="text" placeholder="Write a comment…" maxlength="500" required>
+            <button type="submit">Send</button>
+          </form>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderComment(c) {
+    return `
+      <div class="comment-item">
+        <a class="comment-avatar" href="profile.html?uid=${c.authorId}">${initials(c.authorUsername)}</a>
+        <div class="comment-bubble">
+          <a class="comment-username" href="profile.html?uid=${c.authorId}">${escapeHtml(c.authorUsername)}</a>${escapeHtml(c.text)}
+        </div>
+      </div>
+    `;
+  }
+
+  window.toggleComments = function(postId) {
+    const section = document.getElementById(`comments-${postId}`);
+    const isOpen = section.classList.toggle("show");
+    if (isOpen) {
+      openComments.add(postId);
+      if (!commentUnsubscribers[postId]) {
+        commentUnsubscribers[postId] = listenToComments(postId, (comments) => {
+          commentsCache[postId] = comments;
+          const listEl = document.getElementById(`comments-list-${postId}`);
+          if (listEl) listEl.innerHTML = comments.map(renderComment).join("");
+        });
+      }
+    } else {
+      openComments.delete(postId);
+    }
+  };
+
+  window.submitComment = async function(e, postId) {
+    e.preventDefault();
+    const input = e.target.querySelector("input");
+    try {
+      await addComment(postId, currentUser, currentProfile, input.value);
+      input.value = "";
+    } catch (err) {
+      showToast(err.message);
+    }
+  };
+
+  window.shareThisPost = async function(postId) {
+    const copied = await sharePost(postId);
+    showToast(copied ? "Link copied!" : "Link ready to share");
+  };
+
+  window.deleteThisPost = async function(postId) {
+    if (!confirm("Delete this post? This can't be undone.")) return;
+    try {
+      await deletePost(postId);
+      showToast("Post deleted.");
+    } catch (err) {
+      showToast(err.message);
+    }
+  };
+
+  let hasScrolledToSharedPost = false;
+
+  requireLogin(async (user) => {
+    currentUser = user;
+    const doc = await db.collection("users").doc(user.uid).get();
+    currentProfile = doc.data() || { username: "friend" };
+    document.getElementById("welcome-text").textContent = "Hey, " + currentProfile.username + "!";
+    document.getElementById("my-profile-link").href = "profile.html?uid=" + user.uid;
+    if (currentProfile.isAdmin) {
+      document.getElementById("admin-link").style.display = "inline";
+    }
+
+    listenToFeed((posts) => {
+      const feedEl = document.getElementById("feed");
+      const emptyEl = document.getElementById("empty-feed");
+      if (posts.length === 0) {
+        feedEl.innerHTML = "";
+        emptyEl.style.display = "block";
+      } else {
+        emptyEl.style.display = "none";
+        feedEl.innerHTML = posts.map(renderPost).join("");
+      }
+
+      // If this page was opened via a "Share" link (?post=ID), scroll to
+      // that post and briefly highlight it — only do this once, the
+      // first time the feed loads, not on every live update.
+      if (!hasScrolledToSharedPost) {
+        const params = new URLSearchParams(window.location.search);
+        const sharedPostId = params.get("post");
+        if (sharedPostId) {
+          const target = feedEl.querySelector(`[data-post-id="${sharedPostId}"]`);
+          if (target) {
+            hasScrolledToSharedPost = true;
+            setTimeout(() => {
+              target.scrollIntoView({ behavior: "smooth", block: "center" });
+              target.classList.add("highlighted");
+              setTimeout(() => target.classList.remove("highlighted"), 2500);
+            }, 100);
+          }
+        }
+      }
+    });
+  });
+
+  document.getElementById("logout-btn").addEventListener("click", async () => {
+    await handleLogout();
+    window.location.href = "index.html";
+  });
+
+  document.getElementById("post-btn").addEventListener("click", async () => {
+    const btn = document.getElementById("post-btn");
+    const textEl = document.getElementById("post-text");
+
+    setLoading(btn, true, "Post");
+    try {
+      await createPost(currentUser, currentProfile, textEl.value);
+      textEl.value = "";
+      showToast("Posted!");
+    } catch (err) {
+      showToast(err.message);
+    } finally {
+      setLoading(btn, false, "Post");
+    }
+  });
+</script>
+</body>
+</html>

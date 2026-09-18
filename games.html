@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nekko — Games</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="paw-field"></div>
+
+<div class="topbar">
+  <div class="topbar-title">
+    <div class="brand-mark"><img src="images/logo-placeholder.png" alt="Nekko logo" onerror="this.style.display='none'; this.parentElement.textContent='N';"></div>
+    Nekko
+  </div>
+  <div class="topbar-user">
+    <a class="nav-link" href="dashboard.html">🏠 Home</a>
+    <a class="nav-link" href="chat.html">💬 Chat</a>
+    <button id="logout-btn">Log Out</button>
+  </div>
+</div>
+
+<div class="games-shell">
+  <h1 style="margin-bottom:20px;">Games</h1>
+
+  <p style="font-size:14px; opacity:0.75; margin-bottom:16px;">
+    To start a game, go to a friend's profile and hit "Play Chess."
+  </p>
+
+  <div id="matches-list"></div>
+
+  <div class="empty-state" id="empty-matches" style="display:none;">
+    <div class="paw-big">♟️</div>
+    <h2>No games yet</h2>
+    <p>Visit a friend's profile to challenge them to a match.</p>
+  </div>
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
+<script src="js/firebase-config.js"></script>
+<script src="js/auth.js"></script>
+<script>
+  let currentUser = null;
+
+  function initials(username) {
+    return (username || "?").charAt(0).toUpperCase();
+  }
+  function escapeHtml(str) {
+    const div = document.createElement("div");
+    div.textContent = str;
+    return div.innerHTML;
+  }
+
+  function renderMatch(m) {
+    const otherUid = m.players.find(uid => uid !== currentUser.uid);
+    const otherName = m.usernames[otherUid] || "friend";
+    let statusText;
+    if (m.status === "finished") {
+      if (m.result === "stalemate") statusText = "Draw (stalemate)";
+      else if (m.result === "win-" + currentUser.uid) statusText = "You won! 🎉";
+      else statusText = otherName + " won";
+    } else {
+      const myColor = m.whiteId === currentUser.uid ? "w" : "b";
+      statusText = m.turn === myColor ? "Your move" : "Waiting on " + otherName;
+    }
+    return `
+      <a class="game-card-link" href="chess.html?match=${m.id}">
+        <div class="game-card">
+          <div class="icon">♟️</div>
+          <div>
+            <div class="game-card-title">vs ${escapeHtml(otherName)}</div>
+            <div class="game-card-desc">${escapeHtml(statusText)}</div>
+          </div>
+        </div>
+      </a>
+    `;
+  }
+
+  requireLogin((user) => {
+    currentUser = user;
+    db.collection("chess_matches")
+      .where("players", "array-contains", user.uid)
+      .onSnapshot((snapshot) => {
+        let matches = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        matches.sort((a, b) => {
+          const aTime = a.updatedAt ? a.updatedAt.toMillis() : 0;
+          const bTime = b.updatedAt ? b.updatedAt.toMillis() : 0;
+          return bTime - aTime;
+        });
+        const listEl = document.getElementById("matches-list");
+        const emptyEl = document.getElementById("empty-matches");
+        if (matches.length === 0) {
+          listEl.innerHTML = "";
+          emptyEl.style.display = "block";
+        } else {
+          emptyEl.style.display = "none";
+          listEl.innerHTML = matches.map(renderMatch).join("");
+        }
+      }, (err) => console.error("Matches listener error:", err));
+  });
+
+  document.getElementById("logout-btn").addEventListener("click", async () => {
+    await handleLogout();
+    window.location.href = "index.html";
+  });
+</script>
+</body>
+</html>

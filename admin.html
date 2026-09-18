@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nekko — Admin</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="paw-field"></div>
+
+<div class="topbar">
+  <div class="topbar-title">
+    <div class="brand-mark"><img src="images/logo-placeholder.png" alt="Nekko logo" onerror="this.style.display='none'; this.parentElement.textContent='N';"></div>
+    Nekko
+  </div>
+  <div class="topbar-user">
+    <a class="nav-link" href="dashboard.html">🏠 Home</a>
+    <button id="logout-btn">Log Out</button>
+  </div>
+</div>
+
+<div class="feed-shell">
+  <h1 style="margin-bottom:6px;">🛡️ Admin</h1>
+  <p style="font-size:13px; opacity:0.7; margin-bottom:20px;">
+    Passwords are never visible here or anywhere — Firebase stores them as one-way
+    hashes that not even the app owner can read. This list is usernames only.
+  </p>
+
+  <div class="composer">
+    <table style="width:100%; border-collapse:collapse;">
+      <thead>
+        <tr style="text-align:left; border-bottom:2px solid var(--teal, #1F6F6B);">
+          <th style="padding:8px;">Username</th>
+          <th style="padding:8px;">Joined</th>
+          <th style="padding:8px;"></th>
+        </tr>
+      </thead>
+      <tbody id="users-table-body"></tbody>
+    </table>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
+<script src="js/firebase-config.js"></script>
+<script src="js/auth.js"></script>
+<script>
+  function showToast(msg) {
+    const t = document.getElementById("toast");
+    t.textContent = msg;
+    t.className = "toast show";
+    setTimeout(() => t.className = "toast", 2000);
+  }
+  function escapeHtml(str) {
+    const div = document.createElement("div");
+    div.textContent = str;
+    return div.innerHTML;
+  }
+  function formatDate(ts) {
+    if (!ts) return "—";
+    return ts.toDate().toLocaleDateString();
+  }
+
+  requireLogin(async (user) => {
+    const myDoc = await db.collection("users").doc(user.uid).get();
+    const myProfile = myDoc.data();
+
+    if (!myProfile || !myProfile.isAdmin) {
+      showToast("Admins only.");
+      window.location.href = "dashboard.html";
+      return;
+    }
+
+    const snapshot = await db.collection("users").orderBy("createdAt", "asc").get();
+    const rows = snapshot.docs.map(doc => {
+      const u = doc.data();
+      return `
+        <tr style="border-bottom:1px solid rgba(0,0,0,0.08);">
+          <td style="padding:8px;"><a href="profile.html?uid=${doc.id}">${escapeHtml(u.username)}</a>${u.isAdmin ? " 🛡️" : ""}</td>
+          <td style="padding:8px;">${formatDate(u.createdAt)}</td>
+          <td style="padding:8px;"></td>
+        </tr>
+      `;
+    });
+    document.getElementById("users-table-body").innerHTML = rows.join("");
+  });
+
+  document.getElementById("logout-btn").addEventListener("click", async () => {
+    await handleLogout();
+    window.location.href = "index.html";
+  });
+</script>
+</body>
+</html>

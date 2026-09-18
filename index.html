@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nekko — Log In</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="paw-field"></div>
+
+<div class="page-center">
+  <div class="auth-card">
+    <div class="brand">
+      <div class="brand-mark"><img src="images/logo-placeholder.png" alt="Nekko logo" onerror="this.style.display='none'; this.parentElement.textContent='N';"></div>
+      <h1>Nekko</h1>
+      <p>Your pack, always close by</p>
+    </div>
+
+    <div id="banner" class="status-banner"></div>
+
+    <form id="login-form">
+      <div class="field">
+        <label for="username">Username</label>
+        <input type="text" id="username" placeholder="e.g. nekomen" autocomplete="username" required>
+      </div>
+      <div class="field">
+        <label for="password">Password</label>
+        <input type="password" id="password" placeholder="••••••••" autocomplete="current-password" required>
+      </div>
+      <button type="submit" class="btn" id="login-btn">Log In</button>
+    </form>
+
+    <div class="links-row">
+      <a href="forgot-password.html">Forgot password?</a>
+      <a href="signup.html">Create account</a>
+    </div>
+  </div>
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
+<script src="js/firebase-config.js"></script>
+<script src="js/auth.js"></script>
+<script>
+  const form = document.getElementById("login-form");
+  const banner = document.getElementById("banner");
+  const btn = document.getElementById("login-btn");
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    banner.className = "status-banner";
+    const username = document.getElementById("username").value;
+    const password = document.getElementById("password").value;
+
+    setLoading(btn, true, "Log In");
+    try {
+      await handleLogin(username, password);
+      window.location.href = "dashboard.html";
+    } catch (err) {
+      showBanner(banner, err.message, "error");
+    } finally {
+      setLoading(btn, false, "Log In");
+    }
+  });
+</script>
+</body>
+</html>

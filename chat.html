@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nekko — Chat</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="paw-field"></div>
+
+<div class="topbar">
+  <div class="topbar-title">
+    <div class="brand-mark"><img src="images/logo-placeholder.png" alt="Nekko logo" onerror="this.style.display='none'; this.parentElement.textContent='N';"></div>
+    Nekko
+  </div>
+  <div class="topbar-user">
+    <a class="nav-link" href="dashboard.html">🏠 Home</a>
+    <span id="welcome-text"></span>
+    <button id="logout-btn">Log Out</button>
+  </div>
+</div>
+
+<div class="chat-shell" id="chat-shell">
+  <div class="convo-panel">
+    <div class="new-chat-bar">
+      <input type="text" id="new-chat-username" placeholder="Message a username…">
+      <button id="new-chat-btn">Go</button>
+    </div>
+    <div class="convo-list" id="convo-list"></div>
+  </div>
+
+  <div class="thread-panel">
+    <div class="thread-header">
+      <button class="back-to-list" id="back-btn">←</button>
+      <span id="thread-title">Select a conversation</span>
+    </div>
+    <div class="thread-messages" id="thread-messages">
+      <div class="thread-empty">Pick someone from the list, or start a new chat by typing their username above.</div>
+    </div>
+    <form class="thread-form" id="thread-form" style="display:none;">
+      <input type="text" id="message-input" placeholder="Type a message…" maxlength="1000" required>
+      <button type="submit">Send</button>
+    </form>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
+<script src="js/firebase-config.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/posts.js"></script>
+<script src="js/chat.js"></script>
+<script>
+  let currentUser = null;
+  let currentProfile = null;
+  let activeConversationId = null;
+  let messagesUnsubscribe = null;
+  let conversationsCache = [];
+
+  function showToast(msg) {
+    const t = document.getElementById("toast");
+    t.textContent = msg;
+    t.className = "toast show";
+    setTimeout(() => t.className = "toast", 2000);
+  }
+
+  function initials(username) {
+    return (username || "?").charAt(0).toUpperCase();
+  }
+
+  function renderConvoItem(convo) {
+    const otherName = otherParticipantUsername(convo, currentUser.uid);
+    const active = convo.id === activeConversationId ? "active" : "";
+    return `
+      <div class="convo-item ${active}" onclick="openConversation('${convo.id}', '${escapeHtml(otherName)}')">
+        <div class="post-avatar">${initials(otherName)}</div>
+        <div class="convo-info">
+          <div class="convo-username">${escapeHtml(otherName)}</div>
+          <div class="convo-preview">${escapeHtml(convo.lastMessage || "Say hi 👋")}</div>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderMessage(msg) {
+    const mine = msg.senderId === currentUser.uid ? "mine" : "theirs";
+    return `<div class="msg-bubble ${mine}">${escapeHtml(msg.text)}</div>`;
+  }
+
+  window.openConversation = function(conversationId, otherName) {
+    activeConversationId = conversationId;
+    document.getElementById("thread-title").textContent = otherName;
+    document.getElementById("thread-form").style.display = "flex";
+    document.getElementById("chat-shell").classList.add("thread-open");
+
+    if (messagesUnsubscribe) messagesUnsubscribe();
+    messagesUnsubscribe = listenToMessages(conversationId, (messages) => {
+      const container = document.getElementById("thread-messages");
+      container.innerHTML = messages.length
+        ? messages.map(renderMessage).join("")
+        : `<div class="thread-empty">No messages yet — say hi!</div>`;
+      container.scrollTop = container.scrollHeight;
+    });
+
+    renderConvoList();
+  };
+
+  document.getElementById("back-btn").addEventListener("click", () => {
+    document.getElementById("chat-shell").classList.remove("thread-open");
+  });
+
+  function renderConvoList() {
+    const listEl = document.getElementById("convo-list");
+    if (conversationsCache.length === 0) {
+      listEl.innerHTML = `<div class="thread-empty" style="padding:24px;">No conversations yet</div>`;
+    } else {
+      listEl.innerHTML = conversationsCache.map(renderConvoItem).join("");
+    }
+  }
+
+  document.getElementById("new-chat-btn").addEventListener("click", startNewChat);
+  document.getElementById("new-chat-username").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") startNewChat();
+  });
+
+  async function startNewChat() {
+    const input = document.getElementById("new-chat-username");
+    const username = input.value.trim();
+    if (!username) return;
+
+    try {
+      const conversationId = await startConversationByUsername(currentUser, currentProfile, username);
+      input.value = "";
+      openConversation(conversationId, username.toLowerCase());
+    } catch (err) {
+      showToast(err.message);
+    }
+  }
+
+  document.getElementById("thread-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const input = document.getElementById("message-input");
+    if (!activeConversationId) return;
+    try {
+      await sendMessage(activeConversationId, currentUser.uid, input.value);
+      input.value = "";
+    } catch (err) {
+      showToast(err.message);
+    }
+  });
+
+  requireLogin(async (user) => {
+    currentUser = user;
+    const doc = await db.collection("users").doc(user.uid).get();
+    currentProfile = doc.data() || { username: "friend" };
+    document.getElementById("welcome-text").textContent = "Hey, " + currentProfile.username + "!";
+
+    listenToConversations(user.uid, (convos) => {
+      conversationsCache = convos;
+      renderConvoList();
+    });
+
+    // If we arrived here from a "Message" button on someone's profile,
+    // open that conversation right away.
+    const params = new URLSearchParams(window.location.search);
+    const targetConvo = params.get("conversation");
+    const targetName = params.get("with");
+    if (targetConvo) {
+      openConversation(targetConvo, targetName || "Chat");
+    }
+  });
+
+  document.getElementById("logout-btn").addEventListener("click", async () => {
+    await handleLogout();
+    window.location.href = "index.html";
+  });
+</script>
+</body>
+</html>
